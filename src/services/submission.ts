@@ -3,6 +3,7 @@ import { analyzeSubmission } from './ai'
 import { supabase } from '@/config/supabase'
 
 const STORAGE_KEY = 'janvoice_submissions'
+const PHONE_MAP_KEY = 'janvoice_phone_map'
 
 const hasSupabase = () => Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
 
@@ -19,15 +20,27 @@ function saveLocalSubmissions(submissions: Submission[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(submissions))
 }
 
-export function getCitizenPhone(citizenId: string): string {
+// Keep a phone → citizenId mapping so returning citizens see old submissions
+function getPhoneMap(): Record<string, string> {
   try {
-    const data = localStorage.getItem('janvoice_citizen')
-    if (data) {
-      const citizen = JSON.parse(data)
-      return citizen.phone || 'Unknown'
+    return JSON.parse(localStorage.getItem(PHONE_MAP_KEY) || '{}')
+  } catch { return {} }
+}
+
+function savePhoneMap(map: Record<string, string>) {
+  localStorage.setItem(PHONE_MAP_KEY, JSON.stringify(map))
+}
+
+export function registerCitizenPhone(phone: string) {
+  try {
+    const citizenData = localStorage.getItem('janvoice_citizen')
+    if (citizenData) {
+      const citizen = JSON.parse(citizenData)
+      const map = getPhoneMap()
+      map[phone] = citizen.id
+      savePhoneMap(map)
     }
   } catch {}
-  return 'Unknown'
 }
 
 export async function createSubmission(
@@ -63,6 +76,7 @@ export async function createSubmission(
   if (hasSupabase()) {
     try {
       const { error } = await supabase.from('submissions').insert({
+        id: submission.id,
         citizen_id: citizenId,
         citizen_phone: citizenPhone,
         type,
@@ -92,7 +106,21 @@ export async function createSubmission(
   return submission
 }
 
-export async function getCitizenSubmissions(citizenId: string): Promise<Submission[]> {
+// Merge Supabase + localStorage, deduplicate by ID
+function mergeSubmissions(supabaseList: Submission[], localList: Submission[]): Submission[] {
+  const seen = new Set<string>()
+  const merged: Submission[] = []
+  for (const s of [...supabaseList, ...localList]) {
+    if (!seen.has(s.id)) {
+      seen.add(s.id)
+      merged.push(s)
+    }
+  }
+  return merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+}
+
+export async function getCitizenSubmissions(citizenId: string, phone?: string): Promise<Submission[]> {
+  let supabaseData: Submission[] = []
   if (hasSupabase()) {
     try {
       const { data, error } = await supabase
@@ -100,12 +128,17 @@ export async function getCitizenSubmissions(citizenId: string): Promise<Submissi
         .select('*')
         .eq('citizen_id', citizenId)
         .order('created_at', { ascending: false })
-      if (!error && data) {
-        return data.map(mapRowToSubmission)
-      }
+      if (!error && data) supabaseData = data.map(mapRowToSubmission)
     } catch {}
   }
-  return getLocalSubmissions().filter(s => s.citizenId === citizenId)
+
+  const localData = getLocalSubmissions()
+  const phoneMap = getPhoneMap()
+  const knownIds = new Set<string>([citizenId])
+  if (phone && phoneMap[phone]) knownIds.add(phoneMap[phone])
+
+  const filteredLocal = localData.filter(s => knownIds.has(s.citizenId))
+  return mergeSubmissions(supabaseData, filteredLocal)
 }
 
 export async function getSubmissionById(id: string): Promise<Submission | undefined> {
@@ -123,16 +156,17 @@ export async function getSubmissionById(id: string): Promise<Submission | undefi
 }
 
 export async function getAllSubmissions(): Promise<Submission[]> {
+  let supabaseData: Submission[] = []
   if (hasSupabase()) {
     try {
       const { data, error } = await supabase
         .from('submissions')
         .select('*')
         .order('created_at', { ascending: false })
-      if (!error && data) return data.map(mapRowToSubmission)
+      if (!error && data) supabaseData = data.map(mapRowToSubmission)
     } catch {}
   }
-  return getLocalSubmissions()
+  return mergeSubmissions(supabaseData, getLocalSubmissions())
 }
 
 export async function updateSubmissionStatus(id: string, status: SubmissionStatus) {
