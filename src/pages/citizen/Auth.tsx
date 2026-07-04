@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/store/AuthContext'
 import { AUTH_CONFIG } from '@/config/auth.config'
+import { registerCitizenPhone } from '@/services/submission'
 
 export default function Auth() {
   const [step, setStep] = useState<'phone' | 'otp'>('phone')
