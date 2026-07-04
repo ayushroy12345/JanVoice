@@ -23,7 +23,7 @@ export default function Status() {
 
   useEffect(() => {
     if (citizen) {
-      getCitizenSubmissions(citizen.id).then(setSubmissions)
+      getCitizenSubmissions(citizen.id, citizen.phone).then(setSubmissions)
     }
   }, [citizen])
 
