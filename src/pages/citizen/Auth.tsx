@@ -35,6 +35,8 @@ export default function Auth() {
     setTimeout(() => {
       if (otp === AUTH_CONFIG.MASTER_OTP) {
         loginCitizen(phone)
+        registerCitizenPhone(phone)
+
         navigate('/submit')
       } else {
         setError('Invalid OTP. Try 123456')
